@@ -1,0 +1,12 @@
+google-adk
+google-genai
+fastapi
+uvicorn
+pydantic
+python-dotenv
+litellm
+mcp
+httpx
+pytest
+pytest-asyncio
+pyjwt
