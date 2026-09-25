@@ -22,9 +22,9 @@ const state = {
 };
 
 const PRESEEDED = {
-  P1001: { user_id:'P1001', name:'Rahul Sharma', email:'rahul@example.com', password:'password123', role:'patient' },
-  P1002: { user_id:'P1002', name:'Priya Patel', email:'priya@example.com', password:'password123', role:'patient' },
-  A4001: { user_id:'A4001', name:'Hospital Administrator', email:'admin@hospital.org', password:'adminpass123', role:'admin' }
+  P1001: { user_id:'P1001', name:'Rahul Sharma', email:'rahul@example.com', role:'patient' },
+  P1002: { user_id:'P1002', name:'Priya Patel', email:'priya@example.com', role:'patient' },
+  A4001: { user_id:'A4001', name:'Hospital Administrator', email:'admin@hospital.org', role:'admin' }
 };
 
 // ============================================================
@@ -258,9 +258,13 @@ function setupEventListeners() {
   if (authRegisterBtn) authRegisterBtn.addEventListener('click', handleRegister);
   
   document.querySelectorAll('.qpatient-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      hideModal(authModal);
-      await switchToPatientMode(btn.dataset.id);
+    btn.addEventListener('click', () => {
+      const patientId = btn.dataset.id;
+      const p = PRESEEDED[patientId];
+      if (p && authEmail) {
+        authEmail.value = p.email;
+        if (authPassword) authPassword.focus();
+      }
     });
   });
 
@@ -762,21 +766,15 @@ function recordAiMessageInActiveConv(text, agentName, routeInfo = null, requires
 async function authenticatePatient(patientId) {
   const p = PRESEEDED[patientId];
   if (!p) return;
-  try {
-    const res = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: p.email, password: p.password })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      state.currentUser = { ...p, token: data.access_token };
-      updatePatientUI();
-    }
-  } catch (err) {
-    state.currentUser = { ...p, token: 'mock-token' };
+  // If user already has a valid token for this account, keep it
+  if (state.currentUser && state.currentUser.user_id === patientId && state.currentUser.token) {
     updatePatientUI();
+    return;
   }
+  // Otherwise prompt user to enter credentials
+  showModal(authModal);
+  if (authEmail) authEmail.value = p.email;
+  if (authPassword) authPassword.focus();
 }
 
 async function loadUserAppointmentsSidebar() {
@@ -1457,7 +1455,7 @@ async function sendToBackend(prompt, files = []) {
     }
   } catch (err) {
     removeTyping(typingId);
-    appendAiMessage(`⚠️ Connection Error: Unable to reach ApolloCare AI server. Make sure server is running on localhost:8000.`, 'hospital_root_agent');
+    appendAiMessage(`⚠️ Connection Error: Unable to reach ApolloCare AI server. Make sure server is running on localhost:8500.`, 'hospital_root_agent');
   }
 }
 

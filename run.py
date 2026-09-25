@@ -21,7 +21,14 @@ def run_server():
     """Start the FastAPI server."""
     print(f"Starting {settings.APP_NAME} on http://{settings.HOST}:{settings.PORT}")
     print(f"Interactive API documentation available at http://{settings.HOST}:{settings.PORT}/docs")
-    uvicorn.run("app.main:app", host=settings.HOST, port=settings.PORT, reload=True, reload_dirs=["app"])
+    uvicorn.run(
+        "app.main:app",
+        host=settings.HOST,
+        port=settings.PORT,
+        reload=settings.RELOAD,
+        reload_dirs=["app"] if settings.RELOAD else None
+    )
+
 
 
 async def terminal_chat(user_id: str):
@@ -89,7 +96,7 @@ async def terminal_chat(user_id: str):
 
             raw_reply = "".join(replies).strip()
             if not raw_reply:
-                msg_lower = user_msg.lower().strip()
+                msg_lower = prompt.lower().strip()
                 if any(g in msg_lower for g in ("hi", "hello", "hey", "good morning", "good afternoon", "good evening", "greetings")):
                     full_reply = "Hello! Welcome to ApolloCare. How can I assist you with your appointments, doctors, or medical documents today?"
                 else:

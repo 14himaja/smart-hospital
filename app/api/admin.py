@@ -1,26 +1,17 @@
 """Admin Management and Hospital Document Chunking API Router."""
 
+import io
 from typing import Annotated, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form
 from pydantic import BaseModel
 
-from app.api.auth import get_current_user
+from app.authorization.permissions import require_admin
 from app.database import db
 from app.models import User, UserRole, UserLogin, Token, UserResponse
-from app.api.auth import create_access_token, hash_password
-
+from app.api.auth import create_access_token
+from app.db.repositories.users import verify_password
 
 router = APIRouter(prefix="/admin", tags=["Admin Dashboard & Document Chunking"])
-
-
-def require_admin(current_user: Annotated[User, Depends(get_current_user)]) -> User:
-    """Dependency enforcing Admin role."""
-    if current_user.role != UserRole.ADMIN:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Forbidden: Admin privileges required."
-        )
-    return current_user
 
 
 class AdminDocumentCreate(BaseModel):
@@ -36,17 +27,13 @@ class AdminDocumentUpdate(BaseModel):
 
 
 def extract_text_from_file(file_bytes: bytes, filename: str) -> str:
-    """Extract clean text content from uploaded PDF, TXT, or document file."""
+    """Extract clean text content from uploaded PDF or TXT document file."""
     ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
     if ext == "pdf":
-        text_parts = []
         try:
             import fitz
             doc = fitz.open(stream=file_bytes, filetype="pdf")
-            for page in doc:
-                t = page.get_text("text")
-                if t and t.strip():
-                    text_parts.append(t.strip())
+            text_parts = [p.get_text("text").strip() for p in doc if p.get_text("text").strip()]
             if text_parts:
                 return "\n\n".join(text_parts)
         except Exception:
@@ -54,18 +41,13 @@ def extract_text_from_file(file_bytes: bytes, filename: str) -> str:
 
         try:
             import pdfplumber
-            import io
             with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-                for page in pdf.pages:
-                    t = page.extract_text()
-                    if t and t.strip():
-                        text_parts.append(t.strip())
-            if text_parts:
-                return "\n\n".join(text_parts)
+                text_parts = [p.extract_text().strip() for p in pdf.pages if p.extract_text() and p.extract_text().strip()]
+                if text_parts:
+                    return "\n\n".join(text_parts)
         except Exception:
             pass
 
-    # Fallback to UTF-8 text parsing
     try:
         return file_bytes.decode("utf-8", errors="ignore")
     except Exception:
@@ -76,7 +58,7 @@ def extract_text_from_file(file_bytes: bytes, filename: str) -> str:
 async def admin_login(payload: UserLogin):
     """Authenticate administrator credentials."""
     user = db.get_user_by_email(payload.email)
-    if not user or user.hashed_password != hash_password(payload.password):
+    if not user or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Incorrect admin email or password.")
     if user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="Account is not an administrator.")
@@ -101,10 +83,7 @@ async def create_hospital_document(
     doc: AdminDocumentCreate,
     admin: Annotated[User, Depends(require_admin)]
 ):
-    """
-    Upload a new raw hospital policy/guideline document.
-    Automatically splits into semantic RAG chunks.
-    """
+    """Upload a new raw hospital policy document and split into RAG chunks."""
     if not doc.title or not doc.title.strip():
         raise HTTPException(status_code=400, detail="Document title is required.")
     if not doc.content or not doc.content.strip():
@@ -133,19 +112,13 @@ async def upload_hospital_document_file(
     category: Optional[str] = Form("General Guidelines"),
     content: Optional[str] = Form(None)
 ):
-    """
-    Upload a hospital document file (PDF / TXT / DOCX) or raw text.
-    Extracts text automatically, performs sliding window chunking, and indexes for RAG search.
-    """
+    """Upload a hospital document file (PDF / TXT) or raw text and index for RAG."""
     extracted_text = ""
     file_title = title.strip() if title and title.strip() else ""
     file_type = "Direct Text Input"
 
     if file:
-        if file.filename.lower().endswith(".pdf"):
-            file_type = f"PDF Document ({file.filename})"
-        else:
-            file_type = f"Text Document ({file.filename})"
+        file_type = f"PDF Document ({file.filename})" if file.filename.lower().endswith(".pdf") else f"Text Document ({file.filename})"
         if not file_title:
             file_title = file.filename.rsplit(".", 1)[0].replace("_", " ").replace("-", " ")
         file_bytes = await file.read()
@@ -201,11 +174,7 @@ async def update_hospital_document(
 async def list_hospital_documents(admin: Annotated[User, Depends(require_admin)]):
     """List all admin-uploaded hospital documents and their RAG chunk counts."""
     docs = db.get_hospital_documents()
-    return {
-        "status": "success",
-        "count": len(docs),
-        "documents": docs
-    }
+    return {"status": "success", "count": len(docs), "documents": docs}
 
 
 @router.get("/documents/{doc_id}/chunks", response_model=dict)
@@ -215,12 +184,7 @@ async def get_document_chunks(
 ):
     """View exact chunked data text blocks for a specific hospital document."""
     chunks = db.get_hospital_doc_chunks(doc_id=doc_id)
-    return {
-        "status": "success",
-        "doc_id": doc_id,
-        "chunk_count": len(chunks),
-        "chunks": chunks
-    }
+    return {"status": "success", "doc_id": doc_id, "chunk_count": len(chunks), "chunks": chunks}
 
 
 @router.delete("/documents/{doc_id}", response_model=dict)
@@ -232,11 +196,7 @@ async def delete_hospital_document(
     success = db.delete_hospital_document(doc_id=doc_id, user_id=admin.user_id)
     if not success:
         raise HTTPException(status_code=404, detail="Document not found.")
-
-    return {
-        "status": "success",
-        "message": f"Document {doc_id} and its associated RAG chunks deleted."
-    }
+    return {"status": "success", "message": f"Document {doc_id} and its associated RAG chunks deleted."}
 
 
 @router.get("/stats", response_model=dict)
@@ -278,11 +238,7 @@ async def list_registered_patients(admin: Annotated[User, Depends(require_admin)
         }
         for u in users if u.role == UserRole.PATIENT
     ]
-    return {
-        "status": "success",
-        "count": len(patients),
-        "patients": patients
-    }
+    return {"status": "success", "count": len(patients), "patients": patients}
 
 
 @router.get("/appointments", response_model=dict)
@@ -304,11 +260,7 @@ async def list_all_hospital_appointments(admin: Annotated[User, Depends(require_
         }
         for a in appts
     ]
-    return {
-        "status": "success",
-        "count": len(result),
-        "appointments": result
-    }
+    return {"status": "success", "count": len(result), "appointments": result}
 
 
 @router.delete("/appointments/{appointment_id}", response_model=dict)
@@ -320,10 +272,7 @@ async def delete_appointment_admin(
     success = db.delete_appointment_permanently(appointment_id=appointment_id)
     if not success:
         raise HTTPException(status_code=404, detail="Appointment not found.")
-    return {
-        "status": "success",
-        "message": f"Appointment {appointment_id} permanently deleted by administrator."
-    }
+    return {"status": "success", "message": f"Appointment {appointment_id} permanently deleted by administrator."}
 
 
 @router.patch("/appointments/{appointment_id}/complete", response_model=dict)
@@ -335,8 +284,4 @@ async def mark_appointment_complete_admin(
     success = db.complete_appointment(appointment_id=appointment_id)
     if not success:
         raise HTTPException(status_code=404, detail="Appointment not found.")
-    return {
-        "status": "success",
-        "message": f"Appointment {appointment_id} marked as completed."
-    }
-
+    return {"status": "success", "message": f"Appointment {appointment_id} marked as completed."}

@@ -9,8 +9,9 @@ os.environ["ADK_SUPPRESS_GEMINI_LITELLM_WARNINGS"] = "true"
 os.environ["LITELLM_LOG"] = "ERROR"
 litellm.suppress_debug_info = True
 litellm.set_verbose = False
-warnings.filterwarnings("ignore", category=UserWarning)
-warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning, module=r"litellm.*")
+warnings.filterwarnings("ignore", category=DeprecationWarning, module=r"litellm.*")
+
 
 # Provider-agnostic message sanitization wrapper
 def _sanitize_messages(messages):
@@ -106,4 +107,17 @@ def get_llm():
         kwargs["api_base"] = api_base
 
     return LiteLlm(**kwargs)
+
+
+from google.genai import types
+
+# Standard generation configuration for deterministic, grounded hospital answers
+GEN_CONFIG = types.GenerateContentConfig(
+    temperature=0.2,
+    max_output_tokens=1024
+)
+
+# Shared singleton LLM instance for all agents
+llm = get_llm()
+
 

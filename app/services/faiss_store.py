@@ -6,11 +6,13 @@ and vector-index-to-chunk-id metadata mapping.
 
 import json
 import os
+import threading
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import numpy as np
 import faiss
 
+from app.config import settings
 from app.services.embeddings import embedding_service
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -26,6 +28,7 @@ class FAISSVectorStore:
     """
 
     def __init__(self):
+        self._lock = threading.Lock()
         self.dimension: Optional[int] = None
         self.index: Optional[faiss.IndexFlatIP] = None
         self.mapping: List[Dict[str, Any]] = []
@@ -77,30 +80,46 @@ class FAISSVectorStore:
         if not items:
             return
 
-        texts = [item["text"] for item in items]
-        vectors = embedding_service.get_embeddings_batch(texts)
-        if not vectors:
-            return
+        with self._lock:
+            texts = [item["text"] for item in items]
+            vectors = embedding_service.get_embeddings_batch(texts)
+            if not vectors:
+                return
 
-        dim = len(vectors[0])
-        if self.index is None or self.dimension != dim:
-            self._init_index(dim)
+            dim = len(vectors[0])
+            if self.index is None:
+                self._init_index(dim)
+            elif self.dimension != dim:
+                print(f"[FAISS] Dimension change ({self.dimension} -> {dim}). Rebuilding entire index...")
+                existing_items = [
+                    {
+                        "chunk_id": m["chunk_id"],
+                        "doc_id": m.get("doc_id", ""),
+                        "text": m.get("chunk_text", ""),
+                        "user_id": m.get("user_id", "PUBLIC"),
+                        "topic": m.get("topic", ""),
+                        "source": m.get("source", "")
+                    }
+                    for m in self.mapping
+                ]
+                self.rebuild(existing_items + items)
+                return
 
-        matrix = np.array(vectors, dtype=np.float32)
-        self.index.add(matrix)
+            matrix = np.array(vectors, dtype=np.float32)
+            self.index.add(matrix)
 
-        for i, item in enumerate(items):
-            self.mapping.append({
-                "vector_pos": len(self.mapping),
-                "chunk_id": item["chunk_id"],
-                "doc_id": item.get("doc_id", ""),
-                "user_id": item.get("user_id", "PUBLIC"),
-                "topic": item.get("topic", ""),
-                "chunk_text": item.get("text", ""),
-                "source": item.get("source", "hospital_doc")
-            })
+            for i, item in enumerate(items):
+                self.mapping.append({
+                    "vector_pos": len(self.mapping),
+                    "chunk_id": item["chunk_id"],
+                    "doc_id": item.get("doc_id", ""),
+                    "user_id": item.get("user_id", "PUBLIC"),
+                    "topic": item.get("topic", ""),
+                    "chunk_text": item.get("text", ""),
+                    "source": item.get("source", "hospital_doc")
+                })
 
-        self.save()
+            self.save()
 
     def remove_document_chunks(self, doc_id: str):
         """Remove all chunks associated with a specific doc_id by rebuilding index."""
@@ -120,13 +139,27 @@ class FAISSVectorStore:
         ]
         self.rebuild(remaining_items)
 
-    def search(self, query: str, top_k: int = 15) -> List[Dict[str, Any]]:
+    def update_document_metadata(self, doc_id: str, new_title: str, new_category: Optional[str] = None):
+        """Update metadata (topic/title) for all chunks belonging to doc_id without re-embedding."""
+        with self._lock:
+            updated = False
+            for m in self.mapping:
+                if m.get("doc_id") == doc_id:
+                    m["topic"] = f"{new_title} - {new_category}" if new_category else new_title
+                    updated = True
+            if updated:
+                self.save()
+
+    def search(self, query: str, top_k: int = 15, score_threshold: Optional[float] = None) -> List[Dict[str, Any]]:
         """
         Perform vector similarity search against FAISS index.
-        Returns candidate matching chunks directly from FAISS vector store.
+        Returns candidate matching chunks directly from FAISS vector store filtered by score threshold.
         """
         if self.index is None or self.index.ntotal == 0 or not self.mapping:
             return []
+
+        if score_threshold is None:
+            score_threshold = settings.RAG_SCORE_THRESHOLD
 
         q_vec = embedding_service.get_embedding(query)
         if q_vec is None:
@@ -148,6 +181,8 @@ class FAISSVectorStore:
         results = []
         for score, idx in zip(scores[0], indices[0]):
             if idx < 0 or idx >= len(self.mapping):
+                continue
+            if score < score_threshold:
                 continue
             meta = self.mapping[idx]
             results.append({

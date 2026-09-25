@@ -1,7 +1,55 @@
-"""Callbacks and security guardrails for Google ADK agents."""
-
+import re
 from datetime import datetime
+import contextvars
 from app.database import db
+
+OFF_DOMAIN_REFUSAL = (
+    "I am ApolloCare Hospital's AI Assistant. I can only assist with ApolloCare hospital services, "
+    "appointments, patient records, and health inquiries."
+)
+
+OFF_DOMAIN_PATTERNS = [
+    # Coding / Programming
+    r"\b(python|javascript|typescript|c\+\+|java|rust|html|css|sql|react|node|php|golang|django|flask|fastapi|code|coding|script|algorithm|function|program|class|loop|regex|quicksort|binary search)\b",
+    # Math / Calculus
+    r"\b(derivative|integral|equation|calculus|differentiate|algebra|matrix|polynomial|quadratic|trigonometry)\b",
+    # Cooking / Food Recipes
+    r"\b(recipe|recipes|how to bake|how to cook|ingredients for|bake a cake)\b",
+    # Sports & Tournaments
+    r"\b(fifa|world cup|super bowl|ipl|champions league|premier league|nba|nfl|olympics|cricket match|football match)\b",
+    # Entertainment / Movies
+    r"\b(movie review|box office|netflix|hollywood|bollywood|cast of|actor|actress|cinematography)\b",
+    # Politics & Governance
+    r"\b(president of|prime minister of|election results|geopolitics|parliament|congress|white house)\b",
+    # Creative writing / General non-medical trivia
+    r"\b(write a poem|write a song|write a story|write an essay|tell me a joke)\b",
+]
+
+HEALTH_KEYWORDS = (
+    "hospital", "doctor", "appointment", "prescription", "symptom", "disease",
+    "patient", "medicine", "health", "dose", "dosage", "clinic", "fever", "cough",
+    "cardio", "neuro", "ortho", "surgery", "trauma", "emergency", "report", "lab", "test"
+)
+
+
+def is_off_domain_query(text: str) -> bool:
+    """Deterministic classifier checking if query is strictly outside medical & hospital domain."""
+    if not text:
+        return False
+    t = text.lower().strip()
+    for pattern in OFF_DOMAIN_PATTERNS:
+        if re.search(pattern, t):
+            if any(k in t for k in HEALTH_KEYWORDS):
+                return False
+            return True
+    return False
+
+
+# Request-scoped ContextVars for turn telemetry and action states
+turn_tools_used_var: contextvars.ContextVar = contextvars.ContextVar("turn_tools_used", default=[])
+turn_retrieved_chunks_var: contextvars.ContextVar = contextvars.ContextVar("turn_retrieved_chunks", default=[])
+pending_action_var: contextvars.ContextVar = contextvars.ContextVar("pending_action", default=None)
+
 
 
 def _extract_state(ctx):
@@ -84,9 +132,10 @@ def before_tool_callback(*call_args, **call_kwargs):
 
     session_user_id = _get_user_id(ctx)
 
-    # Always inject authenticated user_id if tool has user_id in arguments
+    # Always inject authenticated user_id if tool has user_id in arguments or is search_hospital_knowledge
     if isinstance(args, dict) and session_user_id:
-        if "user_id" in args:
+        tool_name = getattr(tool, "__name__", getattr(tool, "name", str(tool)))
+        if "user_id" in args or tool_name == "search_hospital_knowledge":
             args["user_id"] = session_user_id
 
     return None
@@ -125,6 +174,22 @@ def after_tool_callback(*call_args, **call_kwargs):
     status = "SUCCESS"
     if isinstance(response, dict) and response.get("status") in ["error", "unauthorized"]:
         status = "DENIED"
+
+    # Update contextvars for accurate per-turn telemetry
+    curr_tools = list(turn_tools_used_var.get())
+    if tool_name not in curr_tools:
+        curr_tools.append(tool_name)
+    turn_tools_used_var.set(curr_tools)
+
+    if isinstance(response, dict):
+        if response.get("status") == "confirmation_required" and "pending_action" in response:
+            pending_action_var.set(response["pending_action"])
+        if "retrieved_chunk_ids" in response:
+            curr_chunks = list(turn_retrieved_chunks_var.get())
+            for cid in response["retrieved_chunk_ids"]:
+                if cid not in curr_chunks:
+                    curr_chunks.append(cid)
+            turn_retrieved_chunks_var.set(curr_chunks)
 
     if state is not None:
         try:

@@ -16,25 +16,68 @@ class Settings:
     DB_PATH: Path = Path(__file__).resolve().parent.parent / "hospital.db"
 
     # Security / Auth
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "smart-hospital-secret-key-super-secure-2026")
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "smart-hospital-secret-key-super-secure-2026-min32chars")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 1 day
+    DEMO_MODE: bool = os.getenv("DEMO_MODE", "false").lower() in ("true", "1")
 
     # Server settings
     HOST: str = os.getenv("HOST", "127.0.0.1")
     PORT: int = int(os.getenv("PORT", "8500"))
+    RELOAD: bool = os.getenv("RELOAD", "false").lower() in ("true", "1")
 
-    # RAG Chunking Configuration
-    RAG_CHUNK_SIZE: int = int(os.getenv("RAG_CHUNK_SIZE", "400"))
-    RAG_CHUNK_OVERLAP: int = int(os.getenv("RAG_CHUNK_OVERLAP", "80"))
+    @property
+    def ALLOWED_ORIGINS(self) -> list:
+        raw = os.getenv("ALLOWED_ORIGINS", "")
+        if raw.strip():
+            return [origin.strip() for origin in raw.split(",") if origin.strip()]
+        return [
+            f"http://localhost:{self.PORT}",
+            f"http://127.0.0.1:{self.PORT}",
+            "http://localhost:3000",
+            "http://localhost:8500",
+            "http://127.0.0.1:8500",
+        ]
+
+    # RAG Chunking & Retrieval Configuration
+    RAG_CHUNK_SIZE: int = int(os.getenv("RAG_CHUNK_SIZE", "500"))
+    RAG_CHUNK_OVERLAP: int = int(os.getenv("RAG_CHUNK_OVERLAP", "100"))
+    RAG_SCORE_THRESHOLD: float = float(os.getenv("RAG_SCORE_THRESHOLD", "0.25"))
+
+    # Indian Hospital Localization & Emergency Constants
+    CURRENCY_SYMBOL: str = "₹"
+    CURRENCY_CODE: str = "INR"
+    EMERGENCY_AMBULANCE: str = "108"
+    EMERGENCY_NATIONAL: str = "112"
+    EMERGENCY_HELPLINE: str = "+91-1800-419-5555"
+    HOSPITAL_LOCATION: str = "Road No. 12, Banjara Hills, Hyderabad, Telangana 500034, India"
+    WORKING_HOURS_START: str = "09:00"
+    WORKING_HOURS_END: str = "17:00"
+    SLOT_DURATION_MINUTES: int = 30
+    AVAILABLE_SLOT_TIMES: list = [
+        "09:00", "09:30", "10:00", "10:30", "11:00", "11:30",
+        "14:00", "14:30", "15:00", "15:30", "16:00", "16:30"
+    ]
+
+    # Smartflo Telephony Configuration
+    SMARTFLO_WS_TOKEN: str = os.getenv("SMARTFLO_WS_TOKEN", "smartflo-secure-telephony-token-2026")
 
     # Gemini Live Native Voice Configuration
-    GEMINI_LIVE_MODEL: str = os.getenv("GEMINI_LIVE_MODEL", "gemini-3.1-flash-live-preview")
+    GEMINI_LIVE_MODEL: str = os.getenv("GEMINI_LIVE_MODEL", "gemini-2.5-flash")
     GEMINI_VOICE_NAME: str = os.getenv("GEMINI_VOICE_NAME", "Aoede")
+    DEFAULT_TEMPERATURE: float = 0.2
 
     @property
     def GEMINI_API_KEY(self) -> str:
         return os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or ""
+
+    def validate_security(self) -> None:
+        """Validate security configuration at application startup."""
+        if not self.DEMO_MODE and len(self.SECRET_KEY) < 32:
+            raise RuntimeError(
+                "SECRET_KEY must be set to a secure string with at least 32 characters in production. "
+                "Generate with: python -c 'import secrets; print(secrets.token_urlsafe(48))'"
+            )
 
     def get_llm_config(self) -> dict:
         """
@@ -55,7 +98,6 @@ class Settings:
             or "google/gemini-2.5-flash-lite"
         ).strip().strip('"\'')
 
-        # Check for explicit API Key env vars
         raw_api_key = (
             os.getenv("API_KEY")
             or os.getenv("LLM_API_KEY")
@@ -109,7 +151,6 @@ class Settings:
             elif lower_model.startswith("deepseek/"):
                 provider = "deepseek"
             elif "/" in raw_model:
-                # E.g. "qwen/qwen3.8-27b" or "google/gemini-2.5-flash-lite"
                 if os.getenv("OPENROUTER_API_KEY") or raw_api_key.startswith("sk-or-v1-"):
                     provider = "openrouter"
                 elif os.getenv("GROQ_API_KEY") or os.getenv("GROK_API_KEY") or raw_api_key.startswith("gsk_"):
@@ -195,4 +236,3 @@ class Settings:
 
 
 settings = Settings()
-

@@ -36,6 +36,12 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     """FastAPI Application Factory."""
+    if not settings.SECRET_KEY or len(settings.SECRET_KEY) < 32:
+        raise RuntimeError(
+            "SECRET_KEY must be set (>= 32 random chars). "
+            "Generate with: python -c 'import secrets; print(secrets.token_urlsafe(48))'"
+        )
+
     app = FastAPI(
         title=settings.APP_NAME,
         version=settings.APP_VERSION,
@@ -46,9 +52,9 @@ def create_app() -> FastAPI:
     # CORS
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
+        allow_origins=settings.ALLOWED_ORIGINS,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["*"],
     )
 

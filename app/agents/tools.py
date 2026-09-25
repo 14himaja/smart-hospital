@@ -1,6 +1,14 @@
+"""
+Medical and Hospital Tools for Smart Hospital Assistant.
+Shared across ADK agents, Gemini Live Voice, and MCP Server.
+"""
+
 import re
-from datetime import date, timedelta
+import datetime as dt
+from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
+
+from app.config import settings
 from app.database import db
 
 
@@ -9,7 +17,7 @@ def normalize_date_str(date_str: Optional[str]) -> Optional[str]:
     if not date_str:
         return None
     raw = str(date_str).strip().lower()
-    today = date.today()
+    today = dt.date.today()
 
     if raw in ("today", "now"):
         return today.isoformat()
@@ -18,30 +26,32 @@ def normalize_date_str(date_str: Optional[str]) -> Optional[str]:
     if raw in ("day after tomorrow", "day after tmrw"):
         return (today + timedelta(days=2)).isoformat()
 
-    weekday_map = {
-        "monday": 0, "mon": 0,
-        "tuesday": 1, "tue": 1, "tues": 1,
-        "wednesday": 2, "wed": 2,
-        "thursday": 3, "thu": 3, "thur": 3, "thurs": 3,
-        "friday": 4, "fri": 4,
-        "saturday": 5, "sat": 5,
-        "sunday": 6, "sun": 6
-    }
-    for day_name, day_idx in weekday_map.items():
-        if day_name in raw:
+    weekday_patterns = [
+        (r"\b(monday|mon)\b", 0),
+        (r"\b(tuesday|tue|tues)\b", 1),
+        (r"\b(wednesday|wed)\b", 2),
+        (r"\b(thursday|thu|thur|thurs)\b", 3),
+        (r"\b(friday|fri)\b", 4),
+        (r"\b(saturday|sat)\b", 5),
+        (r"\b(sunday|sun)\b", 6)
+    ]
+    for pattern, day_idx in weekday_patterns:
+        if re.search(pattern, raw):
             days_ahead = (day_idx - today.weekday() + 7) % 7
             if days_ahead == 0 and ("next" in raw or "upcoming" in raw):
                 days_ahead = 7
+            elif days_ahead == 0:
+                days_ahead = 0
             return (today + timedelta(days=days_ahead)).isoformat()
 
     # Match standard YYYY-MM-DD
-    match = re.search(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})", raw)
+    match = re.search(r"\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b", raw)
     if match:
         y, m, d = match.groups()
         return f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
 
     # Match DD-MM-YYYY
-    match_dmy = re.search(r"(\d{1,2})[-/](\d{1,2})[-/](\d{4})", raw)
+    match_dmy = re.search(r"\b(\d{1,2})[-/](\d{1,2})[-/](\d{4})\b", raw)
     if match_dmy:
         d, m, y = match_dmy.groups()
         return f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
@@ -54,7 +64,7 @@ def normalize_date_str(date_str: Optional[str]) -> Optional[str]:
         "nov": 11, "november": 11, "dec": 12, "december": 12
     }
     for m_name, m_num in months.items():
-        if m_name in raw:
+        if re.search(rf"\b{m_name}\b", raw):
             day_match = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\b", raw)
             if day_match:
                 d = int(day_match.group(1))
@@ -64,13 +74,17 @@ def normalize_date_str(date_str: Optional[str]) -> Optional[str]:
 
 
 def normalize_time_str(time_str: Optional[str]) -> str:
-    """Normalize spoken time strings (e.g. '10:00 AM', '10 AM', '2pm') into standard HH:MM."""
+    """Normalize spoken time strings (e.g. '10:00 AM', '10.30 am', '2pm', '14:00') into HH:MM."""
     if not time_str:
         return "09:00"
     raw = str(time_str).strip().lower()
     is_pm = "pm" in raw
     is_am = "am" in raw
-    clean = re.sub(r"[^\d:]", "", raw)
+
+    # Replace '.' with ':' if used as time separator (e.g. 10.30 am -> 10:30 am)
+    raw_cleaned = re.sub(r"(\d{1,2})\.(\d{2})", r"\1:\2", raw)
+    clean = re.sub(r"[^\d:]", "", raw_cleaned)
+
     if ":" in clean:
         parts = clean.split(":")
         h = int(parts[0])
@@ -79,7 +93,7 @@ def normalize_time_str(time_str: Optional[str]) -> str:
         h = int(clean)
         m = 0
     else:
-        return time_str
+        return "09:00"
 
     if is_pm and h < 12:
         h += 12
@@ -109,6 +123,13 @@ def search_departments() -> Dict[str, Any]:
 def search_doctors(department_name: str = "", specialty: str = "") -> Dict[str, Any]:
     """Search for doctors by department name or specialty."""
     docs = db.get_doctors(department_name=department_name or None, specialty=specialty or None)
+    if not docs and (department_name or specialty):
+        return {
+            "status": "error",
+            "message": f"No doctors found matching department '{department_name}' or specialty '{specialty}'.",
+            "count": 0,
+            "doctors": []
+        }
     return {
         "status": "success",
         "count": len(docs),
@@ -119,7 +140,7 @@ def search_doctors(department_name: str = "", specialty: str = "") -> Dict[str, 
                 "department": d.department_name,
                 "specialty": d.specialty,
                 "available_days": d.available_days,
-                "fee": f"${d.consultation_fee:.2f}"
+                "fee": f"{settings.CURRENCY_SYMBOL}{d.consultation_fee:.2f}"
             }
             for d in docs
         ]
@@ -127,25 +148,17 @@ def search_doctors(department_name: str = "", specialty: str = "") -> Dict[str, 
 
 
 def get_available_slots(doctor_id: str = "", date: str = "") -> Dict[str, Any]:
-    """Get available appointment time slots for a given doctor across upcoming dates or for a specific date (YYYY-MM-DD)."""
+    """Get available appointment time slots for a doctor."""
     clean_date = normalize_date_str(date) if date else None
     doc = db.get_doctor(doctor_id) if doctor_id else None
 
-    if not doc and doctor_id:
-        # Try finding doctors by department or specialty
-        matched_docs = db.get_doctors(department_name=doctor_id, specialty=doctor_id)
-        if matched_docs:
-            doc = matched_docs[0]
-
     if not doc:
-        # If doctor still not specified, return directory of active doctors
-        all_docs = db.get_doctors()
         return {
             "status": "error",
-            "message": "Doctor not found. Please specify one of our hospital doctors.",
+            "message": f"Doctor '{doctor_id}' not found. Please select a verified hospital specialist.",
             "available_doctors": [
-                {"id": d.id, "name": d.name, "department": d.department_name, "specialty": d.specialty, "fee": f"${d.consultation_fee:.2f}", "days": d.available_days}
-                for d in all_docs
+                {"id": d.id, "name": d.name, "department": d.department_name, "specialty": d.specialty, "fee": f"{settings.CURRENCY_SYMBOL}{d.consultation_fee:.2f}"}
+                for d in db.get_doctors()
             ]
         }
 
@@ -155,91 +168,70 @@ def get_available_slots(doctor_id: str = "", date: str = "") -> Dict[str, Any]:
     if clean_date:
         slots = db.get_slots(doctor_id=actual_doc_id, date_str=clean_date, available_only=True)
         times = [s.time for s in slots]
-        if times:
-            return {
-                "status": "success",
-                "doctor_id": actual_doc_id,
-                "doctor_name": doc_name,
-                "department": doc.department_name,
-                "specialty": doc.specialty,
-                "consultation_fee": f"${doc.consultation_fee:.2f}",
-                "date": clean_date,
-                "available_slots": times,
-                "message": f"Available slots for {doc_name} on {clean_date}: {', '.join(times)}."
-            }
-        else:
-            # If no slots on requested date, also supply upcoming available dates
-            upcoming_slots = db.get_slots(doctor_id=actual_doc_id, available_only=True)
-            by_date = {}
-            for s in upcoming_slots:
-                by_date.setdefault(s.date, []).append(s.time)
-            return {
-                "status": "success",
-                "doctor_id": actual_doc_id,
-                "doctor_name": doc_name,
-                "department": doc.department_name,
-                "date": clean_date,
-                "available_slots": [],
-                "available_slots_by_date": by_date,
-                "message": f"No available slots on {clean_date} for {doc_name}. Upcoming available dates: " + ", ".join(list(by_date.keys())[:3])
-            }
+        return {
+            "status": "success",
+            "doctor_id": actual_doc_id,
+            "doctor_name": doc_name,
+            "department": doc.department_name,
+            "specialty": doc.specialty,
+            "consultation_fee": f"{settings.CURRENCY_SYMBOL}{doc.consultation_fee:.2f}",
+            "date": clean_date,
+            "available_slots": times,
+            "message": f"Available slots for {doc_name} on {clean_date}: {', '.join(times) if times else 'None'}."
+        }
 
-    # If no specific date was passed, return all upcoming slots grouped by date
     all_slots = db.get_slots(doctor_id=actual_doc_id, available_only=True)
     slots_by_date = {}
     for s in all_slots:
         slots_by_date.setdefault(s.date, []).append(s.time)
 
-    date_summaries = [f"{d}: {', '.join(times)}" for d, times in list(slots_by_date.items())[:4]]
     return {
         "status": "success",
         "doctor_id": actual_doc_id,
         "doctor_name": doc_name,
         "department": doc.department_name,
         "specialty": doc.specialty,
-        "consultation_fee": f"${doc.consultation_fee:.2f}",
+        "consultation_fee": f"{settings.CURRENCY_SYMBOL}{doc.consultation_fee:.2f}",
         "available_days": doc.available_days,
         "available_slots_by_date": slots_by_date,
         "available_dates": list(slots_by_date.keys()),
-        "message": f"{doc_name} ({doc.specialty}) has available slots on: " + "; ".join(date_summaries)
+        "message": f"{doc_name} ({doc.specialty}) has available slots on upcoming dates."
     }
 
 
 def book_appointment(user_id: str, doctor_id: str, date: str, time: str, confirmed: bool = False, notes: str = "") -> Dict[str, Any]:
-    """Book an appointment for a patient.
-    
-    CRITICAL GUARDRAIL: The user must explicitly confirm the booking details before calling this tool with confirmed=True.
-    If confirmed is False, return a confirmation prompt request.
-    """
+    """Book an appointment with guardrail confirmation."""
     clean_date = normalize_date_str(date) or date
     clean_time = normalize_time_str(time)
     doc = db.get_doctor(doctor_id)
-    doc_name = doc.name if doc else doctor_id
-    actual_doc_id = doc.id if doc else doctor_id
+    if not doc:
+        return {"status": "error", "message": f"Doctor '{doctor_id}' not found."}
+
+    # Validate date
+    try:
+        appt_date = dt.date.fromisoformat(clean_date)
+        if appt_date < dt.date.today():
+            return {"status": "error", "message": f"Cannot book appointments in the past ({clean_date})."}
+    except Exception:
+        return {"status": "error", "message": f"Invalid date format '{clean_date}'."}
 
     if not confirmed:
         return {
             "status": "confirmation_required",
-            "message": (
-                f"Please confirm: Do you want to book an appointment with {doc_name} "
-                f"on {clean_date} at {clean_time}? Respond 'Yes, I confirm' to proceed."
-            ),
+            "message": f"Please confirm: Do you want to book an appointment with {doc.name} on {clean_date} at {clean_time}? Respond 'Yes, I confirm' to proceed.",
             "pending_action": {
                 "action": "book_appointment",
-                "doctor_id": actual_doc_id,
-                "doctor_name": doc_name,
+                "doctor_id": doc.id,
+                "doctor_name": doc.name,
                 "date": clean_date,
                 "time": clean_time,
                 "notes": notes
             }
         }
 
-    appt = db.book_appointment(user_id=user_id, doctor_id=actual_doc_id, date_str=clean_date, time_str=clean_time, notes=notes)
+    appt = db.book_appointment(user_id=user_id, doctor_id=doc.id, date_str=clean_date, time_str=clean_time, notes=notes)
     if not appt:
-        return {
-            "status": "error",
-            "message": f"Doctor {doc_name} or slot at {clean_time} on {clean_date} not available. Please choose another time."
-        }
+        return {"status": "error", "message": f"Doctor {doc.name} or slot at {clean_time} on {clean_date} is unavailable."}
 
     return {
         "status": "success",
@@ -256,63 +248,41 @@ def book_appointment(user_id: str, doctor_id: str, date: str, time: str, confirm
 
 
 def cancel_appointment(user_id: str, appointment_id: str, confirmed: bool = False) -> Dict[str, Any]:
-    """Cancel an existing appointment.
-    
-    CRITICAL GUARDRAIL: The user must explicitly confirm cancellation before confirmed=True is passed.
-    """
-    appt = db.appointments.get(appointment_id)
-    if not appt or appt.user_id != user_id:
-        return {
-            "status": "error",
-            "message": "Appointment not found or you are not authorized to cancel it."
-        }
+    """Cancel an existing appointment with guardrail confirmation."""
+    appt = db.get_appointment(appointment_id)
+    if not appt or (user_id != "ADMIN" and appt.user_id != user_id):
+        return {"status": "error", "message": "Appointment not found or you are not authorized to cancel it."}
 
     if not confirmed:
         return {
             "status": "confirmation_required",
-            "message": (
-                f"Are you sure you want to cancel your appointment with {appt.doctor_name} "
-                f"on {appt.date} at {appt.time}? Respond 'Confirm cancellation' to proceed."
-            ),
-            "pending_action": {
-                "action": "cancel_appointment",
-                "appointment_id": appointment_id
-            }
+            "message": f"Are you sure you want to cancel your appointment with {appt.doctor_name} on {appt.date} at {appt.time}? Respond 'Confirm cancellation' to proceed.",
+            "pending_action": {"action": "cancel_appointment", "appointment_id": appointment_id}
         }
 
     success = db.cancel_appointment(user_id=user_id, appointment_id=appointment_id)
-    if success:
-        return {
-            "status": "success",
-            "message": f"Appointment {appointment_id} has been cancelled."
-        }
+    if not success:
+        return {"status": "error", "message": "Failed to cancel appointment."}
+
     return {
-        "status": "error",
-        "message": "Failed to cancel appointment."
+        "status": "success",
+        "message": f"Appointment {appointment_id} with {appt.doctor_name} on {appt.date} at {appt.time} has been cancelled.",
+        "appointment_id": appointment_id
     }
 
 
 def reschedule_appointment(user_id: str, appointment_id: str, new_date: str, new_time: str, confirmed: bool = False) -> Dict[str, Any]:
-    """Reschedule an existing appointment to a new date and time.
-    
-    CRITICAL GUARDRAIL: User confirmation required before confirmed=True.
-    """
+    """Reschedule an existing appointment."""
     clean_date = normalize_date_str(new_date) or new_date
     clean_time = normalize_time_str(new_time)
-    appt = db.appointments.get(appointment_id)
-    if not appt or appt.user_id != user_id:
-        return {
-            "status": "error",
-            "message": "Appointment not found or you are not authorized to reschedule it."
-        }
+    appt = db.get_appointment(appointment_id)
+    if not appt or (user_id != "ADMIN" and appt.user_id != user_id):
+        return {"status": "error", "message": "Appointment not found or you are not authorized to modify it."}
 
     if not confirmed:
         return {
             "status": "confirmation_required",
-            "message": (
-                f"Please confirm: Reschedule appointment {appointment_id} with {appt.doctor_name} "
-                f"to {clean_date} at {clean_time}? Respond 'Yes, confirm reschedule' to proceed."
-            ),
+            "message": f"Please confirm: Do you want to reschedule appointment {appointment_id} to {clean_date} at {clean_time}? Respond 'Confirm reschedule' to proceed.",
             "pending_action": {
                 "action": "reschedule_appointment",
                 "appointment_id": appointment_id,
@@ -322,47 +292,25 @@ def reschedule_appointment(user_id: str, appointment_id: str, new_date: str, new
         }
 
     rescheduled = db.reschedule_appointment(user_id=user_id, appointment_id=appointment_id, new_date=clean_date, new_time=clean_time)
-    if rescheduled:
-        return {
-            "status": "success",
-            "message": f"Appointment {appointment_id} rescheduled to {clean_date} at {clean_time}.",
-            "appointment": {
-                "id": rescheduled.id,
-                "doctor": rescheduled.doctor_name,
-                "date": rescheduled.date,
-                "time": rescheduled.time
-            }
-        }
+    if not rescheduled:
+        return {"status": "error", "message": "Failed to reschedule appointment. The selected slot may be unavailable."}
+
     return {
-        "status": "error",
-        "message": f"Slot at {clean_time} on {clean_date} is not available. Please choose another time."
+        "status": "success",
+        "message": f"Appointment {appointment_id} rescheduled to {rescheduled.date} at {rescheduled.time}.",
+        "appointment_id": appointment_id,
+        "details": {"doctor": rescheduled.doctor_name, "date": rescheduled.date, "time": rescheduled.time}
     }
 
 
 def get_appointment_history(user_id: str) -> Dict[str, Any]:
-    """Retrieve appointment records for the authenticated user, separating active scheduled appointments from past history."""
+    """Retrieve all past and upcoming appointments for the authenticated patient."""
     appts = db.get_user_appointments(user_id=user_id)
-    today_str = date.today().isoformat()
-    
-    # Active appointments: confirmed/scheduled on or after today
-    scheduled_appts = [a for a in appts if a.status.value in ("confirmed", "scheduled") and a.date >= today_str]
-    past_appts = [a for a in appts if a.status.value in ("completed", "cancelled") or (a.status.value in ("confirmed", "scheduled") and a.date < today_str)]
-
-    sorted_sched = sorted(scheduled_appts, key=lambda x: (x.date, x.time))
-    
-    if sorted_sched:
-        summary_items = [f"{a.doctor_name} ({a.department_name}) on {a.date} at {a.time}" for a in sorted_sched[:3]]
-        spoken_summary = f"You have {len(sorted_sched)} upcoming appointment(s): " + "; ".join(summary_items) + "."
-    else:
-        spoken_summary = "You currently have no upcoming scheduled appointments."
-
     return {
         "status": "success",
         "user_id": user_id,
-        "total_appointments": len(appts),
-        "scheduled_appointments_count": len(sorted_sched),
-        "summary": spoken_summary,
-        "scheduled_appointments": [
+        "count": len(appts),
+        "appointments": [
             {
                 "id": a.id,
                 "doctor": a.doctor_name,
@@ -372,25 +320,13 @@ def get_appointment_history(user_id: str) -> Dict[str, Any]:
                 "status": a.status.value,
                 "notes": a.notes
             }
-            for a in sorted_sched
-        ],
-        "past_history_appointments": [
-            {
-                "id": a.id,
-                "doctor": a.doctor_name,
-                "department": a.department_name,
-                "date": a.date,
-                "time": a.time,
-                "status": a.status.value,
-                "notes": a.notes
-            }
-            for a in sorted(past_appts, key=lambda x: x.date, reverse=True)
+            for a in appts
         ]
     }
 
 
 def get_patient_documents(user_id: str) -> Dict[str, Any]:
-    """List medical documents belonging to the authenticated user."""
+    """Retrieve list of medical documents for the patient."""
     docs = db.get_user_documents(user_id=user_id)
     return {
         "status": "success",
@@ -402,32 +338,30 @@ def get_patient_documents(user_id: str) -> Dict[str, Any]:
                 "title": d.title,
                 "type": d.document_type.value,
                 "upload_date": d.upload_date,
-                "summary": d.summary
+                "summary": d.summary,
+                "key_findings": d.key_findings
             }
             for d in docs
         ]
     }
 
 
-def read_document(user_id: str, document_id: str = "") -> Dict[str, Any]:
-    """Read the extracted contents of an authorized document or lab report."""
+def read_patient_document(user_id: str, document_id: str) -> Dict[str, Any]:
+    """Read a specific authorized patient medical document."""
     docs = db.get_user_documents(user_id=user_id)
     if not docs:
-        return {
-            "status": "error",
-            "message": "No medical documents or lab reports found on file for this patient."
-        }
+        return {"status": "error", "message": "No medical documents found for this patient."}
 
-    target_doc = None
     clean_id = (document_id or "").strip().lower()
-
+    target_doc = None
     if clean_id:
         for d in docs:
             if d.id.lower() == clean_id or clean_id in d.id.lower() or clean_id in d.title.lower():
                 target_doc = d
                 break
-
-    if not target_doc:
+        if not target_doc:
+            return {"status": "error", "message": f"Document '{document_id}' not found."}
+    else:
         target_doc = sorted(docs, key=lambda x: x.upload_date, reverse=True)[0]
 
     return {
@@ -443,9 +377,9 @@ def read_document(user_id: str, document_id: str = "") -> Dict[str, Any]:
     }
 
 
-def search_hospital_knowledge(query: str) -> Dict[str, Any]:
+def search_hospital_knowledge(query: str, user_id: str = "") -> Dict[str, Any]:
     """Search hospital general information, policies, visiting hours, and registration FAQs."""
-    results = db.search_knowledge_base(query=query)
+    results = db.search_knowledge_base(query=query, user_id=user_id or None)
     chunk_ids = [r["chunk_id"] for r in results if "chunk_id" in r]
     return {
         "status": "success",
@@ -455,21 +389,12 @@ def search_hospital_knowledge(query: str) -> Dict[str, Any]:
     }
 
 
-
 def prepare_consultation_summary(user_id: str) -> Dict[str, Any]:
-    """Aggregate authorized patient history and documents into a structured consultation preparation brief."""
+    """Aggregate patient history and documents into a structured consultation preparation brief."""
     appts = db.get_user_appointments(user_id=user_id)
     docs = db.get_user_documents(user_id=user_id)
     user = db.get_user(user_id)
-
-    # Resolve patient name from user record, or fall back to appointment records
-    patient_name = None
-    if user and user.name:
-        patient_name = user.name
-    elif appts:
-        # Some seeded appointments store the patient name indirectly; use user_id as fallback
-        patient_name = None
-    patient_name = patient_name or (f"Patient {user_id}" if user_id else "Patient")
+    patient_name = user.name if user else f"Patient {user_id}"
 
     recent_appts = sorted(appts, key=lambda x: x.date, reverse=True)[:3]
     recent_docs = sorted(docs, key=lambda x: x.upload_date, reverse=True)[:3]
@@ -490,3 +415,8 @@ def prepare_consultation_summary(user_id: str) -> Dict[str, Any]:
             ] if recent_docs else ["No medical documents uploaded yet."]
         }
     }
+
+
+# Backwards compatibility alias
+read_document = read_patient_document
+

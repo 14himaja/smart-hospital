@@ -26,21 +26,21 @@ class User(BaseModel):
 
 
 class UserRegister(BaseModel):
-    name: str
-    email: str
-    password: str
-    phone: Optional[str] = None
-    role: UserRole = UserRole.PATIENT
+    name: str = Field(..., min_length=2, max_length=100)
+    email: str = Field(..., min_length=5, max_length=150)
+    password: str = Field(..., min_length=6, max_length=128)
+    phone: Optional[str] = Field(None, max_length=25)
+    role: Optional[UserRole] = None  # Ignored on public self-registration; always forced to PATIENT
 
 
 class UserLogin(BaseModel):
-    email: str
-    password: str
+    email: str = Field(..., min_length=5, max_length=150)
+    password: str = Field(..., min_length=1, max_length=128)
 
 
 class VerifyOTPRequest(BaseModel):
-    email: str
-    otp: str
+    email: str = Field(..., min_length=5, max_length=150)
+    otp: str = Field(..., min_length=4, max_length=10)
 
 
 class UserResponse(BaseModel):
@@ -109,16 +109,17 @@ class Appointment(BaseModel):
 
 
 class AppointmentCreate(BaseModel):
-    doctor_id: str
-    date: str
-    time: str
-    notes: Optional[str] = None
+    doctor_id: str = Field(..., min_length=1, max_length=50)
+    date: str = Field(..., min_length=8, max_length=20)
+    time: str = Field(..., min_length=3, max_length=10)
+    notes: Optional[str] = Field(None, max_length=500)
     confirmed: bool = False
 
 
 # --- Document & Medical History ---
 
 class DocumentType(str, Enum):
+    GENERAL = "general"
     LAB_REPORT = "laboratory_report"
     PRESCRIPTION = "prescription"
     DISCHARGE_SUMMARY = "discharge_summary"
@@ -150,8 +151,8 @@ class AuditLog(BaseModel):
 # --- Conversational / Chat Models ---
 
 class ChatRequest(BaseModel):
-    message: str
-    session_id: Optional[str] = None
+    message: str = Field(..., min_length=1, max_length=4000)
+    session_id: Optional[str] = Field(None, max_length=100)
 
 
 class ChatResponse(BaseModel):
@@ -159,6 +160,8 @@ class ChatResponse(BaseModel):
     reply: str
     active_agent: Optional[str] = "root_agent"
     state: Dict[str, Any] = Field(default_factory=dict)
+    requires_confirmation: bool = False
+    confirmation_details: Optional[Dict[str, Any]] = None
     # Response source telemetry & classification
     source_type: Optional[str] = "llm"  # "llm", "rag", "llm_rag", "tool", "deterministic"
     llm_used: bool = True
@@ -166,6 +169,7 @@ class ChatResponse(BaseModel):
     tools_used: List[str] = Field(default_factory=list)
     retrieved_chunks: List[str] = Field(default_factory=list)
     trace_id: Optional[str] = None
+
 
 
 # --- Structured Output Models (Section 34) ---

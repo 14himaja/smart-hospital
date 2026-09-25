@@ -48,7 +48,7 @@ async def test_auth_registration_and_login():
         data = reg_resp.json()
         assert data["status"] == "success"
         assert "user_id" in data
-        otp = data["demo_otp"]
+        otp = data.get("demo_otp") or db.get_otp(test_email)
 
         # Verify OTP
         otp_resp = await client.post("/api/auth/verify-otp", json={
@@ -118,6 +118,11 @@ async def test_hospital_catalog_endpoints():
 # --- 4. Tool & Confirmation Guardrail Tests ---
 
 def test_booking_confirmation_guardrail():
+    # Clean up test slot before testing booking guardrails
+    with db._get_connection() as conn:
+        conn.cursor().execute("DELETE FROM appointments WHERE doctor_id = 'DOC-001' AND date = '2026-09-25' AND time = '10:00'")
+        conn.commit()
+
     # Without confirmation -> must demand confirmation
     unconfirmed = book_appointment(
         user_id="P1001",
@@ -170,7 +175,7 @@ def test_history_and_knowledge_tools():
     kb_res = search_hospital_knowledge(query="visiting hours")
     assert kb_res["status"] == "success"
     assert len(kb_res["knowledge_entries"]) > 0
-    assert any("Visiting" in k["topic"] for k in kb_res["knowledge_entries"])
+    assert any("visiting" in k.get("topic", "").lower() or "visiting" in k.get("content", "").lower() for k in kb_res["knowledge_entries"])
 
     # Consultation summary
     summary = prepare_consultation_summary(user_id="P1001")
@@ -248,7 +253,7 @@ def test_rag_grounding_update_and_negative_case():
 
     # 3. Policy Update: Admin updates policy
     db.delete_hospital_document(doc_id=doc_id, user_id="A4001")
-    db.add_hospital_document(
+    updated_doc = db.add_hospital_document(
         title="NICU Visiting Hours Policy",
         category="Policy",
         uploaded_by="A4001",
@@ -259,4 +264,8 @@ def test_rag_grounding_update_and_negative_case():
     assert len(res_2) > 0
     assert any("6 PM to 7 PM" in r["content"] for r in res_2)
     assert not any("4 PM to 5 PM" in r["content"] for r in res_2), "Old policy content must no longer be returned"
+
+    # Clean up test document
+    db.delete_hospital_document(doc_id=updated_doc["id"], user_id="A4001")
+
 

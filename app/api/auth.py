@@ -6,6 +6,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from app.config import settings
 from app.database import db, hash_password
+from app.db.repositories.users import verify_password
 from app.models import (
     User, UserRegister, UserLogin, VerifyOTPRequest,
     UserResponse, Token, UserRole
@@ -14,6 +15,8 @@ from app.models import (
 router = APIRouter(prefix="/auth", tags=["Authentication & Verification"])
 security = HTTPBearer(auto_error=False)
 
+
+import secrets
 
 def create_access_token(user: User) -> str:
     """Generate signed JWT token."""
@@ -40,17 +43,38 @@ async def get_current_user(
                 algorithms=[settings.ALGORITHM]
             )
             user_id: str = payload.get("sub")
-            if user_id:
-                user = db.get_user(user_id)
-                if user:
-                    return user
-        except Exception:
-            pass
+            if not user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid token payload: missing subject identifier.",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            user = db.get_user(user_id)
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="User account associated with this token not found.",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            return user
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication token has expired. Please log in again.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        except jwt.InvalidTokenError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication token.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
-    # Default fallback to patient Rahul Sharma (P1001) for seamless chat & upload
-    default_user = db.get_user("P1001")
-    if default_user:
-        return default_user
+    # In explicit demo mode only, fallback to demo patient
+    if settings.DEMO_MODE:
+        default_user = db.get_user("P1001")
+        if default_user:
+            return default_user
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -66,38 +90,47 @@ async def register(payload: UserRegister):
     if existing:
         raise HTTPException(status_code=400, detail="An account with this email already exists.")
 
+    # Always enforce PATIENT role for self-registration with is_verified=False pending OTP
     new_user = db.create_user(
         name=payload.name,
         email=payload.email,
         password=payload.password,
-        role=payload.role,
-        phone=payload.phone
+        role=UserRole.PATIENT,
+        phone=payload.phone,
+        is_verified=False
     )
 
-    # Issue simulated OTP (for MVP testing: 123456)
-    simulated_otp = "123456"
-    db.otps[payload.email] = simulated_otp
+    # Generate secure random 6-digit OTP
+    otp_code = str(secrets.randbelow(900000) + 100000)
+    db.set_otp(payload.email, otp_code)
 
-    return {
+    response_data = {
         "status": "success",
         "message": "User registered. Please verify identity using the OTP sent to your email.",
         "user_id": new_user.user_id,
-        "email": new_user.email,
-        "demo_otp": simulated_otp
+        "email": new_user.email
     }
+    # Only expose OTP in response if running in explicit DEMO_MODE
+    if settings.DEMO_MODE:
+        response_data["demo_otp"] = otp_code
+
+    return response_data
 
 
 @router.post("/verify-otp", response_model=dict)
 async def verify_otp(payload: VerifyOTPRequest):
-    """Verify one-time passcode for identity verification."""
-    expected_otp = db.otps.get(payload.email, "123456")
-    if payload.otp != expected_otp:
+    """Verify one-time passcode for identity verification and activate account."""
+    expected_otp = db.get_otp(payload.email)
+    if not expected_otp or payload.otp != expected_otp:
         raise HTTPException(status_code=400, detail="Invalid OTP code.")
 
     user = db.get_user_by_email(payload.email)
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
 
+    # Persist verification in database and clear single-use OTP
+    db.update_user_verification(user.user_id, is_verified=True)
+    db.clear_otp(payload.email)
     user.is_verified = True
     token = create_access_token(user)
 
@@ -114,7 +147,7 @@ async def verify_otp(payload: VerifyOTPRequest):
 async def login(payload: UserLogin):
     """Authenticate existing user credentials and return JWT session token."""
     user = db.get_user_by_email(payload.email)
-    if not user or user.hashed_password != hash_password(payload.password):
+    if not user or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Incorrect email or password.")
 
     token = create_access_token(user)
