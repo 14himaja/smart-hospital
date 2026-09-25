@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ApolloCare — Smart Hospital AI</title>
+  <meta name="description" content="ApolloCare Smart Hospital AI Assistant — Powered by Google ADK Multi-Agent System">
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>%F0%9F%8F%A5</text></svg>">
+</head>
+<body>
+
+  <!-- SIDEBAR (PATIENT CHAT VIEW) -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="brand">
+        <div class="brand-icon">🏥</div>
+        <div class="brand-text">
+          <span class="brand-name">ApolloCare</span>
+          <span class="brand-tag">Patient AI Portal</span>
+        </div>
+      </div>
+      <button class="sidebar-toggle" id="sidebarToggle" title="Collapse sidebar">&#9776;</button>
+    </div>
+
+    <button class="new-chat-btn" id="newChatBtn">+ New Conversation</button>
+
+    <div class="sidebar-section-label">Recent</div>
+    <div class="conversation-list" id="conversationList">
+      <div class="conv-item active" data-id="current">
+        <div class="conv-icon">&#128172;</div>
+        <div class="conv-meta">
+          <span class="conv-title">Current Session</span>
+          <span class="conv-time">Now</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="sidebar-section-label" style="display:flex; justify-content:space-between; align-items:center; margin-top:12px">
+      <span>📆 My Booked Appointments</span>
+      <button id="refreshAppointmentsBtn" style="background:none; border:none; color:var(--text-muted); cursor:pointer; font-size:0.75rem" title="Refresh Appointments">🔄</button>
+    </div>
+    <div class="user-appointments-list" id="userAppointmentsList" style="padding:0 8px; font-size:0.8rem; display:flex; flex-direction:column; gap:6px; max-height:180px; overflow-y:auto; margin-bottom:12px">
+      <div style="color:var(--text-muted); padding:6px 4px; font-size:0.75rem">No appointments booked yet.</div>
+    </div>
+
+    <div class="sidebar-footer">
+      <div class="patient-section">
+        <div class="patient-avatar" id="patientAvatarSidebar">RS</div>
+        <div class="patient-info">
+          <span class="patient-name" id="patientNameDisplay">Rahul Sharma</span>
+          <span class="patient-id" id="patientIdDisplay">P1001 · Patient</span>
+        </div>
+        <button class="patient-switch-btn" id="openAuthBtn" title="Switch Patient Account">👤</button>
+        <button class="patient-switch-btn" id="patientSwitchPortalBtn" title="Switch Portal Role">🔄</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- PATIENT MAIN CHAT VIEW -->
+  <main class="chat-main" id="chatMain">
+
+    <!-- Top Bar -->
+    <header class="chat-topbar">
+      <div class="topbar-left">
+        <button class="menu-btn" id="menuBtn">&#9776;</button>
+        <div class="topbar-agent">
+          <div class="agent-dot" id="agentDot"></div>
+          <span class="agent-badge" id="activeAgentBadge">hospital_root_agent</span>
+        </div>
+      </div>
+      <div class="topbar-center">
+        <span class="topbar-title">ApolloCare AI Patient Assistant</span>
+      </div>
+      <div class="topbar-right">
+        <a href="/static/call.html" class="icon-btn" title="Open Voice Call Simulator" style="display:inline-flex; align-items:center; gap:6px; font-size:0.8rem; font-weight:600; padding:5px 10px; background:linear-gradient(135deg, #10b981, #059669); border:none; border-radius:var(--r-md); color:#fff; text-decoration:none;">📞 Call Assistant</a>
+        <div class="status-pill">
+          <span class="pulse"></span>
+          <span id="systemStatusText">Multi-Agent Online</span>
+        </div>
+        <button class="icon-btn" id="toggleReportsSidebarBtn" title="Toggle Stored Lab Reports & Records Panel" style="display:inline-flex; align-items:center; gap:6px; font-size:0.8rem; font-weight:600; padding:5px 10px; background:var(--bg-card-hover); border:1px solid var(--border-subtle); border-radius:var(--r-md); color:var(--text-primary); cursor:pointer;">
+          <span>📋 Lab Reports</span>
+          <span class="badge-pill" id="reportsCountBadge" style="background:var(--accent-color); color:#fff; font-size:0.7rem; padding:1px 6px; border-radius:10px; font-weight:700">0</span>
+        </button>
+        <button class="icon-btn" id="themeToggleBtn" title="Toggle Cream / Dark Mode" style="font-size:1.1rem; padding:4px 8px;">🌙</button>
+        <button class="icon-btn" id="clearChatBtn" title="Clear chat">&#128465;</button>
+      </div>
+    </header>
+
+    <!-- Messages Area -->
+    <div class="messages-container" id="chatMessages">
+      <!-- Welcome Screen -->
+      <div class="welcome-screen" id="welcomeScreen">
+        <div class="welcome-logo">🏥</div>
+        <h1 class="welcome-title">How can I help you today?</h1>
+        <p class="welcome-sub">I'm your ApolloCare AI powered by Google ADK. Ask me about appointments, lab reports, prescriptions, or hospital info.</p>
+        <div class="suggestion-grid">
+          <button class="suggestion-card" data-prompt="What departments are available at Apollo Hospital?">
+            <span class="sug-icon">🏥</span>
+            <span class="sug-title">Hospital Departments</span>
+            <span class="sug-desc">Browse specialties and services</span>
+          </button>
+          <button class="suggestion-card" data-prompt="Find available appointment slots for Cardiology this week">
+            <span class="sug-icon">📅</span>
+            <span class="sug-title">Book Appointment</span>
+            <span class="sug-desc">Find and reserve doctor slots</span>
+          </button>
+          <button class="suggestion-card" data-prompt="Show my latest lab reports">
+            <span class="sug-icon">📋</span>
+            <span class="sug-title">Lab Reports</span>
+            <span class="sug-desc">View and explain test results</span>
+          </button>
+          <button class="suggestion-card" data-prompt="What are the hospital visiting hours, emergency contacts, and policies?">
+            <span class="sug-icon">ℹ️</span>
+            <span class="sug-title">Hospital Info</span>
+            <span class="sug-desc">Hours, policies and FAQs</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- SLOT PICKER PANEL (slides up) -->
+    <div class="slot-picker-panel" id="slotPickerPanel" style="display:none">
+      <div class="slot-panel-header">
+        <span class="slot-panel-title">📅 Available Appointment Slots</span>
+        <button class="slot-panel-close" id="closeSlotPanel">✕</button>
+      </div>
+      <div class="slot-dept-tabs" id="slotDeptTabs"></div>
+      <div class="slot-doctors-list" id="slotDoctorsList"></div>
+    </div>
+
+    <!-- QUICK CHIPS -->
+    <div class="quick-chips-row" id="quickChipsRow">
+      <button class="qchip" data-prompt="What departments are available?">🏥 Departments</button>
+      <button class="qchip" data-prompt="Show available appointment slots" id="slotChip">📅 Book Slot</button>
+      <button class="qchip" data-prompt="Show my lab reports">📋 Lab Reports</button>
+      <button class="qchip" data-prompt="Show my scheduled appointments">📆 My Appointments</button>
+      <button class="qchip" data-prompt="What are hospital emergency guidelines?">🚑 Emergency</button>
+    </div>
+
+    <!-- INPUT BAR -->
+    <div class="input-area">
+      <div class="input-wrapper" id="inputWrapper">
+        <!-- UPLOAD PREVIEW STRIP -->
+        <div class="upload-preview-strip" id="uploadPreviewStrip" style="display:none">
+          <div class="upload-previews" id="uploadPreviews"></div>
+        </div>
+        <div class="input-action-group">
+          <button class="input-action-btn" id="attachBtn" title="Attach file or prescription">📎</button>
+          <input type="file" id="fileInput" multiple accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg,.gif,.webp" style="display:none">
+          <button class="input-action-btn" id="slotPickerBtn" title="Browse appointment slots">📅</button>
+        </div>
+        <textarea id="chatInput" class="chat-textarea" placeholder="Message ApolloCare AI..." rows="1" autocomplete="off"></textarea>
+        <button type="button" id="sendBtn" class="send-btn" title="Send" disabled>&#10148;</button>
+      </div>
+      <p class="input-disclaimer">ApolloCare AI can make mistakes. Always verify medical information with a qualified professional.</p>
+    </div>
+  </main>
+
+  <!-- RIGHT SIDEBAR: STORED LAB REPORTS & MEDICAL RECORDS -->
+  <aside class="reports-sidebar" id="reportsSidebar">
+    <div class="reports-sidebar-header">
+      <div class="reports-header-title">
+        <span style="font-size:1.25rem">🧪</span>
+        <div>
+          <span class="reports-main-title">Lab Reports & Records</span>
+          <span class="reports-sub-title">Stored Patient Vault</span>
+        </div>
+      </div>
+      <div style="display:flex; align-items:center; gap:4px">
+        <button id="refreshReportsBtn" class="icon-btn" title="Refresh Lab Reports" style="font-size:0.85rem; padding:4px 6px">🔄</button>
+        <button id="closeReportsSidebarBtn" class="icon-btn" title="Hide Lab Reports Panel" style="font-size:0.9rem; padding:4px 6px">✕</button>
+      </div>
+    </div>
+
+    <!-- Filter Category Tabs -->
+    <div class="reports-filter-row" id="reportsFilterRow">
+      <button class="report-filter-btn active" data-filter="all">All (<span id="countFilterAll">0</span>)</button>
+      <button class="report-filter-btn" data-filter="laboratory_report">🧪 Labs (<span id="countFilterLab">0</span>)</button>
+      <button class="report-filter-btn" data-filter="prescription">💊 Prescription (<span id="countFilterRx">0</span>)</button>
+    </div>
+
+    <!-- Reports Scrollable List -->
+    <div class="reports-list-container" id="patientReportsList">
+      <div class="reports-loading-state" style="text-align:center; padding:24px; color:var(--text-muted); font-size:0.8rem">
+        <span>⏳ Loading your lab reports...</span>
+      </div>
+    </div>
+
+    <!-- Sidebar Footer Action (Hidden as files are uploaded directly via chat toolbar) -->
+    <div class="reports-sidebar-footer" style="display:none">
+      <button class="btn-primary" id="sidebarUploadReportBtn" style="width:100%; display:none">
+        <span>📤 Upload Lab Report / Rx</span>
+      </button>
+      <input type="file" id="sidebarReportFileInput" accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg" style="display:none">
+    </div>
+  </aside>
+
+  <!-- DEDICATED FULL-SCREEN ADMIN OPERATIONS PORTAL -->
+  <main class="admin-main" id="adminDashboardView" style="display:none; flex-direction:column; width:100%; height:100vh; background:var(--bg-main); overflow-y:auto">
+    <!-- Admin Top Header -->
+    <header style="background:var(--bg-surface); border-bottom:1px solid var(--border-subtle); padding:16px 28px; display:flex; justify-content:space-between; align-items:center">
+      <div style="display:flex; align-items:center; gap:14px">
+        <div style="font-size:1.8rem">👑</div>
+        <div>
+          <div style="font-weight:700; font-size:1.15rem; color:var(--text-primary)">ApolloCare Admin Operations Console</div>
+          <div style="font-size:0.78rem; color:var(--text-muted)">Hospital Knowledge Base Engine & Patient Directory Management</div>
+        </div>
+      </div>
+      <div style="display:flex; align-items:center; gap:14px">
+        <div style="background:var(--bg-card-hover); padding:6px 14px; border-radius:20px; border:1px solid var(--border-subtle); font-size:0.82rem; font-weight:600; color:var(--primary)">
+          👑 Hospital Administrator (A4001)
+        </div>
+        <button class="icon-btn" id="adminThemeToggleBtn" title="Toggle Theme" style="font-size:18px; padding:6px 10px; border:1px solid var(--border-subtle); border-radius:var(--r-md); background:var(--bg-card-hover)">🌙</button>
+        <button class="btn-secondary" id="adminLogoutBtn" style="padding:8px 16px; font-size:0.82rem">🔄 Switch Portal / Logout</button>
+      </div>
+    </header>
+
+    <!-- Sub-Nav Tabs -->
+    <div style="display:flex; gap:10px; border-bottom:1px solid var(--border-subtle); padding:12px 28px; background:var(--bg-surface)" id="adminTabNav">
+      <button class="dept-tab-btn active" id="adminTabDocs">📄 Document Upload & Chunks</button>
+      <button class="dept-tab-btn" id="adminTabPatients">👥 Patient Directory</button>
+      <button class="dept-tab-btn" id="adminTabAppts">📅 Appointments Ledger</button>
+    </div>
+
+    <!-- Admin Body Section -->
+    <div style="padding:28px; max-width:1200px; margin:0 auto; width:100%; display:flex; flex-direction:column; gap:24px">
+      
+      <!-- Section 1: Stats Grid -->
+      <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:16px" id="adminStatsGrid">
+        <div style="background:var(--bg-surface); border:1px solid var(--border-subtle); padding:18px; border-radius:var(--r-lg); text-align:center; box-shadow:var(--shadow-sm)">
+          <div style="font-size:1.8rem; font-weight:800; color:var(--primary)" id="statUsers">0</div>
+          <div style="font-size:0.8rem; font-weight:600; color:var(--text-muted); margin-top:4px">Registered Patients</div>
+        </div>
+        <div style="background:var(--bg-surface); border:1px solid var(--border-subtle); padding:18px; border-radius:var(--r-lg); text-align:center; box-shadow:var(--shadow-sm)">
+          <div style="font-size:1.8rem; font-weight:800; color:#06b6d4" id="statAppts">0</div>
+          <div style="font-size:0.8rem; font-weight:600; color:var(--text-muted); margin-top:4px">Total Appointments</div>
+        </div>
+        <div style="background:var(--bg-surface); border:1px solid var(--border-subtle); padding:18px; border-radius:var(--r-lg); text-align:center; box-shadow:var(--shadow-sm)">
+          <div style="font-size:1.8rem; font-weight:800; color:#f59e0b" id="statHDocs">0</div>
+          <div style="font-size:0.8rem; font-weight:600; color:var(--text-muted); margin-top:4px">Hospital Documents</div>
+        </div>
+        <div style="background:var(--bg-surface); border:1px solid var(--border-subtle); padding:18px; border-radius:var(--r-lg); text-align:center; box-shadow:var(--shadow-sm)">
+          <div style="font-size:1.8rem; font-weight:800; color:#10b981" id="statChunks">0</div>
+          <div style="font-size:0.8rem; font-weight:600; color:var(--text-muted); margin-top:4px">Active Document Chunks</div>
+        </div>
+      </div>
+
+      <!-- Section 2: Tab Content Area -->
+      <div id="adminTabContent">
+        <!-- Content 1: Documents & Chunking -->
+        <div id="adminSecDocs" style="display:flex; flex-direction:column; gap:20px">
+          <div style="border:1px solid var(--border-subtle); background:var(--bg-surface); padding:24px; border-radius:var(--r-lg); box-shadow:var(--shadow-sm)">
+            <h3 style="margin-top:0; margin-bottom:10px; color:var(--text-primary)">📄 Upload Hospital Document</h3>
+            <p style="font-size:0.83rem; color:var(--text-muted); margin-bottom:16px">Upload a policy PDF or document file OR paste document text below. The system extracts text, applies sliding-window chunking, and indexes RAG chunks automatically.</p>
+            <form id="adminUploadForm" style="display:flex; flex-direction:column; gap:14px">
+              <div style="display:flex; gap:12px; flex-wrap:wrap">
+                <input type="text" id="adminDocTitle" class="modal-input" placeholder="Document Title (e.g. ICU Visitor Policy 2026)" style="flex:2; min-width:200px">
+                <input type="text" id="adminDocCategory" class="modal-input" placeholder="Category (e.g. Clinical Guidelines)" style="flex:1; min-width:160px">
+              </div>
+
+              <!-- OPTIONAL FILE UPLOAD FIELD -->
+              <div style="display:flex; flex-direction:column; gap:6px">
+                <label style="font-size:0.82rem; font-weight:600; color:var(--text-secondary)">📁 Upload Document File (PDF / TXT / DOCX):</label>
+                <div style="display:flex; align-items:center; gap:12px; background:var(--bg-input); padding:10px 14px; border-radius:var(--r-sm); border:1px solid var(--border-subtle)">
+                  <input type="file" id="adminDocFileInput" accept=".pdf,.txt,.docx,.doc" style="font-size:0.82rem; color:var(--text-primary); cursor:pointer">
+                  <span style="font-size:0.78rem; color:var(--text-muted)" id="adminFileInfo">Optional - Attach PDF or Text document</span>
+                </div>
+              </div>
+
+              <!-- OPTIONAL TEXTAREA FIELD -->
+              <div style="display:flex; flex-direction:column; gap:6px">
+                <label style="font-size:0.82rem; font-weight:600; color:var(--text-secondary)">📝 Or Paste Document Content (Optional if file attached):</label>
+                <textarea id="adminDocContent" class="modal-input" placeholder="Paste full hospital policy, protocol, or guideline text here..." rows="4"></textarea>
+              </div>
+
+              <button type="submit" class="btn-primary" id="adminUploadBtn" style="align-self:flex-start; padding:10px 22px">🚀 Upload & Process Document</button>
+            </form>
+          </div>
+
+          <div style="border:1px solid var(--border-subtle); background:var(--bg-surface); padding:24px; border-radius:var(--r-lg); box-shadow:var(--shadow-sm)">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:10px">
+              <h3 style="margin:0; color:var(--text-primary)">📚 Uploaded Hospital Knowledge Base Documents</h3>
+              <button class="btn-secondary" id="adminCleanDocsBtn" style="padding:4px 10px; font-size:0.75rem" title="Remove duplicate test entries">🧹 Clean Duplicates</button>
+            </div>
+            <div id="adminDocList" style="display:flex; flex-direction:column; gap:12px">
+              <p style="font-size:0.85rem; color:var(--text-muted); padding:8px">Loading documents...</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Content 2: Patient Directory -->
+        <div id="adminSecPatients" style="display:none">
+          <h3 style="margin-top:0; margin-bottom:12px; color:var(--text-primary)">👥 Registered Patients Directory</h3>
+          <div class="md-table-wrap">
+            <table class="md-table" style="width:100%">
+              <thead>
+                <tr>
+                  <th>Patient ID</th>
+                  <th>Full Name</th>
+                  <th>Email</th>
+                  <th>Phone</th>
+                  <th>Verified</th>
+                  <th>Registered At</th>
+                </tr>
+              </thead>
+              <tbody id="patientTableBody">
+                <tr><td colspan="6" style="text-align:center; color:var(--text-muted)">Loading patients...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Content 3: Appointments Ledger -->
+        <div id="adminSecAppts" style="display:none">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+            <h3 style="margin:0; color:var(--text-primary)">📅 Hospital Appointments Ledger</h3>
+            <button id="adminRefreshApptsBtn" class="btn-primary" style="padding:6px 14px; font-size:0.8rem">🔄 Refresh Ledger</button>
+          </div>
+          <div class="md-table-wrap">
+            <table class="md-table" style="width:100%">
+              <thead>
+                <tr>
+                  <th>Appt ID</th>
+                  <th>Patient ID</th>
+                  <th>Doctor</th>
+                  <th>Department</th>
+                  <th>Date & Time</th>
+                  <th>Status</th>
+                  <th>Notes</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="apptTableBody">
+                <tr><td colspan="8" style="text-align:center; color:var(--text-muted)">Loading appointments...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+
+  <!-- ROLE PORTAL SELECTION MODAL -->
+  <div class="modal-overlay" id="portalSelectModal" style="display:none">
+    <div class="modal-box" style="max-width:480px">
+      <div class="modal-header">
+        <h3>🏥 Select Portal Role</h3>
+        <button class="modal-close" id="closePortalSelectModal">✕</button>
+      </div>
+      <div class="modal-body" style="display:flex; flex-direction:column; gap:18px;">
+        <p style="font-size:0.88rem; color:var(--text-muted); margin:0; text-align:center;">Please choose your account type to sign in:</p>
+        
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+          <!-- User / Patient -->
+          <div class="role-select-card" id="selectPatientPortalBtn">
+            <div class="role-icon">👤</div>
+            <div class="role-title">User</div>
+            <div class="role-subtitle">Patient Portal</div>
+          </div>
+
+          <!-- Admin -->
+          <div class="role-select-card" id="selectAdminPortalBtn">
+            <div class="role-icon">👑</div>
+            <div class="role-title">Admin</div>
+            <div class="role-subtitle">Admin Console</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PATIENT AUTH MODAL (STRICTLY FOR PATIENTS ONLY) -->
+  <div class="modal-overlay" id="authModal" style="display:none">
+    <div class="modal-box" style="max-width:440px">
+      <div class="modal-header">
+        <h3>Patient Sign In / Register</h3>
+        <button class="modal-close" id="closeAuthModal">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:8px">Quick select patient:</p>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px">
+          <button class="qpatient-btn" data-id="P1001">Patient: Rahul (P1001)</button>
+          <button class="qpatient-btn" data-id="P1002">Patient: Priya (P1002)</button>
+        </div>
+        <div class="modal-divider"><span>or login manually</span></div>
+        <form id="authForm" style="display:flex; flex-direction:column; gap:12px; margin-top:12px">
+          <input type="text" id="authName" class="modal-input" placeholder="Full Name (for registration)">
+          <input type="email" id="authEmail" class="modal-input" placeholder="Email address" required>
+          <input type="password" id="authPassword" class="modal-input" placeholder="Password" required>
+          <div style="display:flex; gap:10px">
+            <button type="submit" id="authLoginBtn" class="btn-primary" style="flex:1">Login</button>
+            <button type="button" id="authRegisterBtn" class="btn-secondary" style="flex:1">Register</button>
+          </div>
+          <div id="authFeedback" style="font-size:0.8rem; text-align:center; color:var(--text-muted)"></div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- ADMIN AUTH MODAL (STRICTLY FOR ADMIN ONLY) -->
+  <div class="modal-overlay" id="adminAuthModal" style="display:none">
+    <div class="modal-box" style="max-width:420px">
+      <div class="modal-header">
+        <h3>👑 Admin Portal Sign In</h3>
+        <button class="modal-close" id="closeAdminAuthModal">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:12px">Sign in with administrator credentials:</p>
+        <form id="adminAuthForm" style="display:flex; flex-direction:column; gap:12px">
+          <input type="email" id="adminAuthEmail" class="modal-input" placeholder="Admin Email" required>
+          <input type="password" id="adminAuthPassword" class="modal-input" placeholder="Password" required>
+          <button type="submit" class="btn-primary" style="width:100%">Login to Admin Console</button>
+          <div id="adminAuthFeedback" style="font-size:0.8rem; text-align:center; color:var(--text-muted)"></div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- CHUNK INSPECTOR MODAL -->
+  <div class="modal-overlay" id="chunkInspectorModal" style="display:none">
+    <div class="modal-box" style="max-width:720px">
+      <div class="modal-header">
+        <h3 id="chunkInspectorTitle">🧩 Text Chunks Inspector</h3>
+        <button class="modal-close" id="closeChunkInspector">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:12px">Below are the overlapping text chunks generated by the backend sliding-window engine (400 chars, 80 char overlap):</p>
+        <div id="chunksContainer" style="display:flex; flex-direction:column; gap:12px; max-height:400px; overflow-y:auto"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- EDIT DOCUMENT MODAL -->
+  <div class="modal-overlay" id="editDocModal" style="display:none">
+    <div class="modal-box" style="max-width:540px">
+      <div class="modal-header">
+        <h3>✏️ Edit Hospital Document</h3>
+        <button class="modal-close" id="closeEditDocModal">✕</button>
+      </div>
+      <div class="modal-body">
+        <form id="editDocForm" style="display:flex; flex-direction:column; gap:12px">
+          <input type="hidden" id="editDocId">
+          <div style="display:flex; flex-direction:column; gap:4px">
+            <label style="font-size:0.8rem; font-weight:600; color:var(--text-secondary)">Document Title:</label>
+            <input type="text" id="editDocTitleInput" class="modal-input" placeholder="Document Title" required>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:4px">
+            <label style="font-size:0.8rem; font-weight:600; color:var(--text-secondary)">Category:</label>
+            <input type="text" id="editDocCategoryInput" class="modal-input" placeholder="Category">
+          </div>
+          <div style="display:flex; flex-direction:column; gap:4px">
+            <label style="font-size:0.8rem; font-weight:600; color:var(--text-secondary)">Document Content (Optional update):</label>
+            <textarea id="editDocContentInput" class="modal-input" rows="5" placeholder="Document Text Content"></textarea>
+          </div>
+          <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px">
+            <button type="button" class="btn-secondary" id="cancelEditDocBtn">Cancel</button>
+            <button type="submit" class="btn-primary">💾 Save Changes</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- PATIENT DOCUMENT / LAB REPORT VIEWER MODAL -->
+  <div class="modal-overlay" id="docViewModal" style="display:none">
+    <div class="modal-box" style="max-width:680px; max-height:85vh; display:flex; flex-direction:column">
+      <div class="modal-header">
+        <div style="display:flex; align-items:center; gap:10px">
+          <span id="docModalIcon" style="font-size:1.4rem">📋</span>
+          <div>
+            <h3 id="docModalTitle" style="margin:0; font-size:1.05rem; color:var(--text-primary)">Document Details</h3>
+            <span id="docModalMeta" style="font-size:0.75rem; color:var(--text-muted)">Uploaded on 2026-09-08</span>
+          </div>
+        </div>
+        <button class="modal-close" id="closeDocViewModal">✕</button>
+      </div>
+
+      <div class="modal-body" style="overflow-y:auto; display:flex; flex-direction:column; gap:14px; padding:16px 20px">
+        <!-- Findings & Summary section -->
+        <div id="docModalSummaryBox" style="background:var(--bg-secondary); border:1px solid var(--border-subtle); border-radius:8px; padding:12px">
+          <div style="font-size:0.78rem; font-weight:700; color:var(--accent-color); margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px">Clinical Summary & Findings</div>
+          <p id="docModalSummary" style="font-size:0.85rem; color:var(--text-primary); margin:0; line-height:1.4"></p>
+          <div id="docModalFindings" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px"></div>
+        </div>
+
+        <!-- Full Extracted Content section -->
+        <div style="display:flex; flex-direction:column; gap:6px">
+          <div style="font-size:0.78rem; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px">Extracted Document / Test Content</div>
+          <pre id="docModalContent" style="background:var(--bg-primary); border:1px solid var(--border-subtle); border-radius:8px; padding:14px; font-size:0.82rem; color:var(--text-primary); font-family:monospace; white-space:pre-wrap; max-height:240px; overflow-y:auto; line-height:1.45; margin:0"></pre>
+        </div>
+      </div>
+
+      <div class="modal-footer" style="padding:12px 20px; border-top:1px solid var(--border-subtle); display:flex; justify-content:space-between; align-items:center; background:var(--bg-surface)">
+        <button class="btn-secondary" id="closeDocViewModal2">Close</button>
+        <div style="display:flex; gap:8px">
+          <button class="btn-secondary" id="deleteDocModalBtn" style="background:rgba(239,68,68,0.15); color:#ef4444; border:1px solid rgba(239,68,68,0.3)">🗑️ Delete Document</button>
+          <button class="btn-primary" id="askAiDocBtn" style="display:flex; align-items:center; gap:6px">
+            <span>💬 Ask ApolloCare AI to Explain</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
